@@ -15,14 +15,18 @@ class CameraLiveScreen extends StatefulWidget {
   _CameraLiveScreenState createState() => _CameraLiveScreenState();
 }
 
-class _CameraLiveScreenState extends State<CameraLiveScreen> {
+class _CameraLiveScreenState extends State<CameraLiveScreen>
+    with SingleTickerProviderStateMixin {
   CameraController? _controller;
   List<CameraDescription>? cameras;
   String? _apiResponse;
+  String _arrowDirection = 'stop';
   bool _isProcessing = false;
   bool _isSpeaking = false;
   Timer? _timer;
   late TTSService _ttsService;
+  late AnimationController _animationController;
+  late Animation<double> _progress;
 
   @override
   void initState() {
@@ -33,6 +37,10 @@ class _CameraLiveScreenState extends State<CameraLiveScreen> {
         _isSpeaking = false;
       });
     });
+    _animationController =
+        AnimationController(vsync: this, duration: const Duration(milliseconds: 600))
+          ..repeat(reverse: true);
+    _progress = Tween<double>(begin: 0, end: 1).animate(_animationController);
     initializeCamera();
   }
 
@@ -85,6 +93,7 @@ class _CameraLiveScreenState extends State<CameraLiveScreen> {
       setState(() {
         _apiResponse = formattedInstruction;
         _isSpeaking = true;
+        _arrowDirection = _getDirectionFromZones(decoded['safe_zones'] ?? []);
       });
 
       await _ttsService.speak(formattedInstruction);
@@ -92,6 +101,7 @@ class _CameraLiveScreenState extends State<CameraLiveScreen> {
       final error = "Failed to connect to the server.";
       setState(() {
         _apiResponse = error;
+        _arrowDirection = 'stop';
         _isSpeaking = true;
       });
       await _ttsService.speak(error);
@@ -128,11 +138,19 @@ class _CameraLiveScreenState extends State<CameraLiveScreen> {
     return buffer.toString().trim();
   }
 
+  String _getDirectionFromZones(List<dynamic> zones) {
+    if (zones.contains("left") && zones.contains("right")) return "forward";
+    if (zones.contains("left")) return "left";
+    if (zones.contains("right")) return "right";
+    return "stop";
+  }
+
   @override
   void dispose() {
     _ttsService.dispose();
     _controller?.dispose();
     _timer?.cancel();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -149,36 +167,103 @@ class _CameraLiveScreenState extends State<CameraLiveScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text("Live Camera Navigation")),
-      body: Column(
+      body: Stack(
         children: [
-          AspectRatio(
-            aspectRatio: previewAspectRatio,
-            child: OverflowBox(
-              maxHeight: screenAspectRatio > previewAspectRatio
-                  ? screenSize.width / previewAspectRatio
-                  : screenSize.height,
-              maxWidth: screenAspectRatio > previewAspectRatio
-                  ? screenSize.width
-                  : screenSize.height * previewAspectRatio,
-              child: CameraPreview(_controller!),
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            "Navigation Output:",
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                _apiResponse ?? "Waiting for data...",
-                style: const TextStyle(fontSize: 16),
+          Column(
+            children: [
+              AspectRatio(
+                aspectRatio: previewAspectRatio,
+                child: OverflowBox(
+                  maxHeight: screenAspectRatio > previewAspectRatio
+                      ? screenSize.width / previewAspectRatio
+                      : screenSize.height,
+                  maxWidth: screenAspectRatio > previewAspectRatio
+                      ? screenSize.width
+                      : screenSize.height * previewAspectRatio,
+                  child: CameraPreview(_controller!),
+                ),
               ),
-            ),
+              const SizedBox(height: 20),
+              const Text(
+                "Navigation Output:",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(
+                    _apiResponse ?? "Waiting for data...",
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          AnimatedBuilder(
+            animation: _progress,
+            builder: (_, __) {
+              return CustomPaint(
+                painter: DirectionArrowPainter(_arrowDirection, _progress.value),
+                child: Container(),
+              );
+            },
           ),
         ],
       ),
     );
   }
+}
+
+class DirectionArrowPainter extends CustomPainter {
+  final String direction;
+  final double progress;
+
+  DirectionArrowPainter(this.direction, this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = direction == "stop" ? Colors.red : Colors.green
+      ..strokeWidth = 6
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height * 0.75);
+    final path = Path();
+
+    switch (direction) {
+      case "left":
+        path.moveTo(center.dx + 30, center.dy);
+        path.quadraticBezierTo(
+          center.dx - 100 * progress,
+          center.dy - 100 * progress,
+          center.dx - 120 * progress,
+          center.dy - 200 * progress,
+        );
+        canvas.drawPath(path, paint);
+        break;
+      case "right":
+        path.moveTo(center.dx - 30, center.dy);
+        path.quadraticBezierTo(
+          center.dx + 100 * progress,
+          center.dy - 100 * progress,
+          center.dx + 120 * progress,
+          center.dy - 200 * progress,
+        );
+        canvas.drawPath(path, paint);
+        break;
+      case "forward":
+        path.moveTo(center.dx, center.dy);
+        path.lineTo(center.dx, center.dy - 200 * progress);
+        canvas.drawPath(path, paint);
+        break;
+      case "stop":
+        final stopPaint = Paint()..color = Colors.red;
+        canvas.drawCircle(center, 30 + 5 * progress, stopPaint);
+        break;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant DirectionArrowPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.direction != direction;
 }
