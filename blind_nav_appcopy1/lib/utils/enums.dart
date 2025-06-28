@@ -1,6 +1,6 @@
-enum OverlayDirection {
-  left,
-  right,
-  forward,
-  stop,
-}
+// enum OverlayDirection {
+//   left,
+//   right,
+//   forward,
+//   stop,
+// }
